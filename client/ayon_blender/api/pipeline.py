@@ -2,6 +2,7 @@ import os
 import sys
 import traceback
 from typing import Callable, Dict, Iterator, List, Optional, Union
+from .path_remapping import remap_all_paths
 
 import bpy
 
@@ -179,6 +180,9 @@ def pype_excepthook_handler(*args):
     traceback.print_exception(*args)
 
 
+from .path_remapping import remap_all_paths
+
+
 def install():
     """Install Blender configuration for AYON."""
     sys.excepthook = pype_excepthook_handler
@@ -205,6 +209,18 @@ def install():
 
     if not IS_HEADLESS:
         ops.register()
+
+    # Defer path remapping — bpy.data is restricted during startup.
+    # The timer fires once Blender is fully initialized.
+    def _deferred_remap():
+        if bpy.data.filepath:
+            print("[AYON Path Remap] Running on already-open file "
+                  "(deferred from install)")
+            remap_all_paths()
+        return None  # Returning None unregisters the timer
+
+    bpy.app.timers.register(_deferred_remap, first_interval=0.1)
+
 
 
 def uninstall():
@@ -396,6 +412,14 @@ def on_open():
     project = os.environ.get("AYON_PROJECT_NAME")
     settings = get_blender_settings(project)
 
+    # DEBUG: dump image paths RIGHT HERE
+    for image in bpy.data.images:
+        if image.filepath:
+            print(f"[DEBUG on_open] raw='{image.filepath}' "
+                  f"abs='{bpy.path.abspath(image.filepath)}'")
+
+    remap_all_paths()
+
     set_resolution_startup = settings.get("set_resolution_startup")
     set_frames_startup = settings.get("set_frames_startup")
 
@@ -466,6 +490,7 @@ def _on_save_post(*args):
 
 @bpy.app.handlers.persistent
 def _on_load_post(*args):
+    remap_all_paths()
     # Detect new file or opening an existing file
     if bpy.data.filepath:
         # Likely this was an open operation since it has a filepath
