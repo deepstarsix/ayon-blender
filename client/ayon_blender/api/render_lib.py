@@ -389,7 +389,7 @@ def create_render_node_tree(
     slots.clear()
 
     # Create a new socket for the Beauty output
-    pass_name = "Beauty"
+    pass_name = "rgba"
     for render_layer_node in render_layer_nodes:
         render_layer = render_layer_node.layer
         slot = _create_aov_slot(pass_name, render_layer, socket_type="RGBA")
