@@ -184,7 +184,8 @@ class ValidateCompositorNodeFileOutputPaths(
 
     This validator checks that the render output paths set in the
     `CompositorNodeOutputFile` adhere to a few strict requirements:
-    - The output base path must include the workfile name in the output path.
+    - The output base path must match `//renders/blender/{variant}` as
+      produced by the render setup in render_lib.
     - The output filename must end with `.{frame}.{ext}` where it is fine
       if the path on the node is set as `filename.` because if frame number
       and extension are missing Blender will automatically append them.
@@ -226,8 +227,13 @@ class ValidateCompositorNodeFileOutputPaths(
                             "Please save the workfile.")
             return None
 
-        workfile_filename = os.path.basename(workfile_filepath)
-        workfile_filename_no_ext, _ext = os.path.splitext(workfile_filename)
+        variant_name: str = instance.data.get("variant", "")
+        expected_base_path = render_lib.get_base_render_output_path(
+            variant_name=variant_name
+        )
+        expected_abs_base = os.path.normpath(
+            bpy.path.abspath(expected_base_path)
+        )
 
         # Get expected files per AOV
         expected_files: dict[str, list[str]] = (
@@ -239,10 +245,10 @@ class ValidateCompositorNodeFileOutputPaths(
         for _aov, output_files in expected_files.items():
             first_file = output_files[0]
 
-            if workfile_filename_no_ext not in first_file:
+            if not first_file.startswith(expected_abs_base):
                 return (
-                    "Render output does not include workfile name: "
-                    f"{workfile_filename_no_ext}.\n\n"
+                    "Render output path does not match the expected base "
+                    f"path: {expected_base_path}.\n\n"
                     "Use Repair action to fix the render base filepath."
                 )
 
@@ -280,56 +286,40 @@ class ValidateCompositorNodeFileOutputPaths(
 
     @classmethod
     def repair(cls, instance):
-        """Update the render output path to include the scene name."""
+        """Update the render output path to match the expected base path."""
         output_node: "bpy.types.CompositorNodeOutputFile" = (
             instance.data["transientData"]["instance_node"]
         )
+        variant_name: str = instance.data.get("variant", "")
         # See: https://developer.blender.org/docs/release_notes/5.0/python_api/#nodes  # noqa
         if lib.get_blender_version() >= (5, 0, 0):
-            cls._repair_blender_5(output_node)
+            cls._repair_blender_5(output_node, variant_name)
         else:
-            cls._repair_blender_4(output_node)
+            cls._repair_blender_4(output_node, variant_name)
 
     @classmethod
     def _repair_blender_5(
         cls,
-        output_node: "bpy.types.CompositorNodeOutputFile"
+        output_node: "bpy.types.CompositorNodeOutputFile",
+        variant_name: str
     ):
-        # Ensure a directory is included that matches the current filename
-        blend_file: str = os.path.basename(bpy.data.filepath)
-        blend_file = os.path.splitext(blend_file)[0]
-        orig_output_path = output_node.directory
-        output_node_dir = os.path.dirname(orig_output_path)
-        new_output_dir = os.path.join(output_node_dir, blend_file)
-        output_node.directory = new_output_dir
+        output_node.directory = render_lib.get_base_render_output_path(
+            variant_name=variant_name
+        )
 
     @classmethod
     def _repair_blender_4(
         cls,
-        output_node: "bpy.types.CompositorNodeOutputFile"
+        output_node: "bpy.types.CompositorNodeOutputFile",
+        variant_name: str
     ):
         # Check whether CompositorNodeOutputFile is rendering to multilayer EXR
         file_format: str = output_node.format.file_format
         is_multilayer: bool = file_format == "OPEN_EXR_MULTILAYER"
 
-        filename = os.path.basename(bpy.data.filepath)
-        filename, ext = os.path.splitext(filename)
-        orig_output_path = output_node.base_path
-        if is_multilayer:
-            # If the output node is a multilayer EXR then the base path
-            # includes the render filename like `Main_beauty.####.exr`
-            # So we split that off, and assume that the parent folder to
-            # the filename is the workfile filename named folder.
-            render_folder, render_filename = os.path.split(orig_output_path)
-            output_node_dir = os.path.dirname(render_folder)
-            new_output_dir = os.path.join(output_node_dir,
-                                          filename,
-                                          render_filename)
-        else:
-            output_node_dir = os.path.dirname(orig_output_path)
-            new_output_dir = os.path.join(output_node_dir, filename)
-
-        output_node.base_path = new_output_dir
+        output_node.base_path = render_lib.get_base_render_output_path(
+            variant_name=variant_name
+        )
 
         # Repair all output filenames to ensure they end with `.{frame}.{ext}`
         base_path: str = output_node.base_path
@@ -359,8 +349,8 @@ class ValidateCompositorNodeFileOutputPaths(
         
         The filepaths must:
         
-        - Include the workfile name in the output path, this is to ensure
-          unique render paths for each workfile version.
+        - Use the expected base path `//renders/blender/{variant}` as set
+          by the render setup. Use Repair to reset the path.
         """)
 
         if lib.get_blender_version() < (5, 0, 0):
@@ -372,4 +362,3 @@ class ValidateCompositorNodeFileOutputPaths(
             """)
 
         return doc
-

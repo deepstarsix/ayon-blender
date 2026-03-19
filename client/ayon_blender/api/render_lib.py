@@ -58,12 +58,18 @@ def set_render_format(ext: str, multilayer: bool):
     bpy.context.scene.render.use_file_extension = True
     image_settings = bpy.context.scene.render.image_settings
 
+    # Force AYON renders to multilayer EXR with half-float and DWAB.
+    ext = "exr"
+    multilayer = True
+
     if multilayer and lib.get_blender_version() >= (5, 0, 0):
         image_settings.media_type = "MULTI_LAYER_IMAGE"
 
     if ext == "exr":
         file_format = "OPEN_EXR_MULTILAYER" if multilayer else "OPEN_EXR"
         image_settings.file_format = file_format
+        image_settings.color_depth = "16"
+        image_settings.exr_codec = "DWAB"
     elif ext == "bmp":
         image_settings.file_format = "BMP"
     elif ext == "rgb":
@@ -279,30 +285,11 @@ def get_base_render_output_path(
 ) -> str:
     """Return the base render output path for the given variant name.
 
-    The output path is based on the AYON project settings and the current
-    Blender scene workfile path.
-
-    If the render settings are not set to multi-EXR then only the base path
-    is returned, otherwise the full path to the render output file is returned.
-
+    Returns a Blender-relative path that uses a fixed renders folder structure
+    without version numbering, allowing renders to overwrite in place.
     """
-    workfile_filepath = Path(bpy.data.filepath)
-    assert workfile_filepath, "Workfile not saved. Please save the file first."
-
-    render_folder = get_default_render_folder(project_settings)
-    if multi_exr is None:
-        multi_exr = get_multilayer(project_settings)
-
-    workfile_dir = workfile_filepath.parent
-    workfile_filename = Path(workfile_filepath.name).stem
-    base_folder = Path.joinpath(workfile_dir, render_folder, workfile_filename)
-    if not multi_exr:
-        # If not multi-exr, we only supply the root folder to render to.
-        return str(base_folder)
-
-    filename = f"{variant_name}.####"
-    filepath = base_folder / filename
-    return str(filepath)
+    # Use Blender-relative path: //renders/blender/<variant>
+    return f"//renders/blender/{variant_name}"
 
 
 def create_render_node_tree(
@@ -320,8 +307,9 @@ def create_render_node_tree(
         project_settings (dict): The project settings dictionary.
     """
     aov_sep = get_aov_separator(project_settings)
-    ext = get_image_format(project_settings)
-    multilayer = get_multilayer(project_settings)
+    # Force compositor outputs to multilayer EXR behavior.
+    ext = "exr"
+    multilayer = True
     compositing = get_compositing(project_settings)
 
     tree = lib.get_scene_node_tree(ensure_exists=True)
@@ -353,18 +341,18 @@ def create_render_node_tree(
     # By default, match output format from scene file format
     image_settings = bpy.context.scene.render.image_settings
     output.format.file_format = image_settings.file_format
+    output.format.color_depth = "16"
+    output.format.exr_codec = "DWAB"
 
     # Define the base path for the File Output node.
     base_path = get_base_render_output_path(
         unique_name, project_settings=project_settings
     )
     if blender_version >= (5, 0, 0):
-        base_path_dir, base_path_filename = os.path.split(base_path)
-        if not multi_exr:
-            base_path_filename += aov_sep
-
-        output.directory = base_path_dir
-        output.file_name = base_path_filename
+        # For Blender 5+, set directory and filename separately
+        output.directory = base_path
+        # Append frame number and EXR extension to filename
+        output.file_name = f"{unique_name}.####.exr"
         slots = output.file_output_items
     else:
         output.base_path = base_path
@@ -463,8 +451,9 @@ def prepare_rendering(
         project_name: str = get_current_project_name()
         project_settings = get_project_settings(project_name)
 
-    ext = get_image_format(project_settings)
-    multilayer = get_multilayer(project_settings)
+    # Force AYON render outputs to multilayer EXR.
+    ext = "exr"
+    multilayer = True
     renderer = get_renderer(project_settings)
     ver_major, ver_minor, _ = lib.get_blender_version()
     if renderer == "BLENDER_EEVEE" and (
@@ -508,43 +497,19 @@ def prepare_rendering(
 
 
 def get_tmp_scene_render_output_path(project_settings: dict) -> str:
-    """Get the render output path for the current scene.
+    """Get the render output path for the temporary scene render.
 
-    This is the scene-wide render path that AYON essentially does not use,
-    but it cannot be disabled in Blender. So we store at least a unique
-    temporary path for the scene render output.
+    Returns a Blender-relative path for the scene-wide render output
+    that can be disabled by Compositor output nodes.
     """
-    render_folder = get_default_render_folder(project_settings)
-
-    workfile_filepath: str = bpy.data.filepath
-    if not workfile_filepath:
-        raise RuntimeError("Workfile not saved. Please save the file first.")
-
-    workfile_filename = os.path.basename(workfile_filepath)
-    workfile_filename_no_ext, _ext = os.path.splitext(workfile_filename)
-
-    # Even though we render a `tmp` file we still want to write into
-    # a unique folder or filename per folder to avoid conflicts on
-    # potential simultaneous renders on the farm trying to write into
-    # the same folder and have them unable to write due to file locks.
-    # TODO: Starting in Blender 4.5 we can use {blend_name} in the render path
-    #   so that we do not need to set this again for every workfile version
-    #   increase.
-    path = os.path.join(
-        os.getenv("AYON_WORKDIR"),
-        render_folder,
-        workfile_filename_no_ext,
-        "tmp",
-        "tmp"
-    )
-    return path.replace("\\", "/")
+    # Use Blender-relative path: //renders/blender/tmp/<variant>
+    return "//renders/blender/tmp/tmp"
 
 
 def set_tmp_scene_render_output_path(project_settings: dict):
     # Clear the scene render filepath, so that the outputs are handled only by
     # the file output nodes in the compositor.
     path = get_tmp_scene_render_output_path(project_settings)
-    os.makedirs(path, exist_ok=True)
     bpy.context.scene.render.filepath = path
 
 
