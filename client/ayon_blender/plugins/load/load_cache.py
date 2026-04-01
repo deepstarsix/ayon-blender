@@ -64,7 +64,7 @@ class CacheModelLoader(plugin.BlenderLoader):
     product_base_types = {"*"}
     product_types = product_base_types
     representations = {"*"}
-    extensions = {"abc", "usd", "usda", "usdc", "obj"}
+    extensions = {"abc", "usd", "usda", "usdc", "usdz", "obj"}
 
     label = "Load Cache"
     icon = "code-fork"
@@ -200,8 +200,14 @@ class CacheModelLoader(plugin.BlenderLoader):
 
         for obj in objects:
             if obj.type == 'MESH':
+                # QUESTION: Are we sure we want to remove the materials when
+                #  removing the mesh? What if the material is shared with
+                #  other objects?
                 for material_slot in list(obj.material_slots):
-                    bpy.data.materials.remove(material_slot.material)
+                    material = material_slot.material
+                    if not material:
+                        continue
+                    bpy.data.materials.remove(material)
                 bpy.data.meshes.remove(obj.data)
             elif obj.type == 'EMPTY':
                 objects.extend(obj.children)
@@ -219,7 +225,7 @@ class CacheModelLoader(plugin.BlenderLoader):
         relative = bpy.context.preferences.filepaths.use_relative_paths
 
         if any(libpath.lower().endswith(ext)
-               for ext in [".usd", ".usda", ".usdc"]):
+               for ext in [".usd", ".usda", ".usdc", ".usdz"]):
             # USD
             bpy.ops.wm.usd_import(
                 filepath=libpath,
