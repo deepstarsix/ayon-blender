@@ -98,6 +98,11 @@ def remap_all_paths():
             print(f"[AYON Path Remap] Library: '{abs_path}' -> '{new_path}'",
                   flush=True)
             lib.filepath = new_path
+            try:
+                lib.reload()
+            except Exception as e:
+                print(f"[AYON Path Remap] Warning: could not reload library "
+                      f"'{new_path}': {e}", flush=True)
             remapped_count += 1
 
     for cache in bpy.data.cache_files:
