@@ -316,11 +316,24 @@ def get_base_render_output_path(
 ) -> str:
     """Return the base render output path for the given variant name.
 
-    Returns a Blender-relative path that uses a fixed renders folder structure
-    without version numbering, allowing renders to overwrite in place.
+    Uses a fixed renders folder structure without version numbering, allowing
+    renders to overwrite in place.
+
+    The path is absolute and based on the workfile folder. It must not be a
+    Blender-relative `//` path, because the farm renders the published copy of
+    the workfile and relative paths would resolve next to that copy instead of
+    the work directory that AYON collects the expected files from.
     """
-    # Use Blender-relative path: //renders/blender/<variant>
-    return f"//renders/blender/{variant_name}"
+    workfile_filepath: str = bpy.data.filepath
+    if not workfile_filepath:
+        raise RuntimeError("Workfile not saved. Please save the file first.")
+
+    if project_settings is None:
+        project_settings = get_project_settings(get_current_project_name())
+
+    render_folder = get_default_render_folder(project_settings)
+    base_folder = Path(workfile_filepath).parent / render_folder
+    return str(base_folder / variant_name)
 
 
 def create_render_node_tree(
@@ -598,11 +611,23 @@ def prepare_rendering(
 def get_tmp_scene_render_output_path(project_settings: dict) -> str:
     """Get the render output path for the temporary scene render.
 
-    Returns a Blender-relative path for the scene-wide render output
-    that can be disabled by Compositor output nodes.
+    This is the scene-wide render path that AYON essentially does not use,
+    but it cannot be disabled in Blender. So we store at least a temporary
+    path for the scene render output.
+
+    Like the Compositor output paths this must be absolute so that the farm
+    does not write it next to the published copy of the workfile.
     """
-    # Use Blender-relative path: //renders/blender/tmp/<variant>
-    return "//renders/blender/tmp/tmp"
+    render_folder = get_default_render_folder(project_settings)
+
+    workdir: str = os.getenv("AYON_WORKDIR") or os.path.dirname(
+        bpy.data.filepath
+    )
+    if not workdir:
+        raise RuntimeError("Workfile not saved. Please save the file first.")
+
+    path = os.path.join(workdir, render_folder, "tmp", "tmp")
+    return path.replace("\\", "/")
 
 
 def set_tmp_scene_render_output_path(project_settings: dict):

@@ -184,8 +184,8 @@ class ValidateCompositorNodeFileOutputPaths(
 
     This validator checks that the render output paths set in the
     `CompositorNodeOutputFile` adhere to a few strict requirements:
-    - The output base path must match `//renders/blender/{variant}` as
-      produced by the render setup in render_lib.
+    - The output base path must match `{workfile folder}/{render folder}/
+      {variant}` as produced by the render setup in render_lib.
     - The output filename must end with `.{frame}.{ext}` where it is fine
       if the path on the node is set as `filename.` because if frame number
       and extension are missing Blender will automatically append them.
@@ -229,7 +229,8 @@ class ValidateCompositorNodeFileOutputPaths(
 
         variant_name: str = instance.data.get("variant", "")
         expected_base_path = render_lib.get_base_render_output_path(
-            variant_name=variant_name
+            variant_name=variant_name,
+            project_settings=instance.context.data["project_settings"]
         )
         expected_abs_base = os.path.normpath(
             bpy.path.abspath(expected_base_path)
@@ -245,7 +246,9 @@ class ValidateCompositorNodeFileOutputPaths(
         for _aov, output_files in expected_files.items():
             first_file = output_files[0]
 
-            if not first_file.startswith(expected_abs_base):
+            # The collected expected files use forward slashes, so both sides
+            # must be normalized before comparing them.
+            if not os.path.normpath(first_file).startswith(expected_abs_base):
                 return (
                     "Render output path does not match the expected base "
                     f"path: {expected_base_path}.\n\n"
@@ -291,34 +294,39 @@ class ValidateCompositorNodeFileOutputPaths(
             instance.data["transientData"]["instance_node"]
         )
         variant_name: str = instance.data.get("variant", "")
+        project_settings: dict = instance.context.data["project_settings"]
         # See: https://developer.blender.org/docs/release_notes/5.0/python_api/#nodes  # noqa
         if lib.get_blender_version() >= (5, 0, 0):
-            cls._repair_blender_5(output_node, variant_name)
+            cls._repair_blender_5(output_node, variant_name, project_settings)
         else:
-            cls._repair_blender_4(output_node, variant_name)
+            cls._repair_blender_4(output_node, variant_name, project_settings)
 
     @classmethod
     def _repair_blender_5(
         cls,
         output_node: "bpy.types.CompositorNodeOutputFile",
-        variant_name: str
+        variant_name: str,
+        project_settings: dict
     ):
         output_node.directory = render_lib.get_base_render_output_path(
-            variant_name=variant_name
+            variant_name=variant_name,
+            project_settings=project_settings
         )
 
     @classmethod
     def _repair_blender_4(
         cls,
         output_node: "bpy.types.CompositorNodeOutputFile",
-        variant_name: str
+        variant_name: str,
+        project_settings: dict
     ):
         # Check whether CompositorNodeOutputFile is rendering to multilayer EXR
         file_format: str = output_node.format.file_format
         is_multilayer: bool = file_format == "OPEN_EXR_MULTILAYER"
 
         output_node.base_path = render_lib.get_base_render_output_path(
-            variant_name=variant_name
+            variant_name=variant_name,
+            project_settings=project_settings
         )
 
         # Repair all output filenames to ensure they end with `.{frame}.{ext}`
@@ -349,8 +357,8 @@ class ValidateCompositorNodeFileOutputPaths(
         
         The filepaths must:
         
-        - Use the expected base path `//renders/blender/{variant}` as set
-          by the render setup. Use Repair to reset the path.
+        - Use the expected base path `{workfile folder}/{render folder}/
+          {variant}` as set by the render setup. Use Repair to reset the path.
         """)
 
         if lib.get_blender_version() < (5, 0, 0):
