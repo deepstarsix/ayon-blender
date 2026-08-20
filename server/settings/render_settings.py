@@ -104,6 +104,26 @@ class CustomPassesModel(BaseSettingsModel):
     )
 
 
+class AovPresetModel(BaseSettingsModel):
+    """Named set of AOVs used as a starting point when creating a render."""
+    name: str = SettingsField(
+        "Default",
+        title="Preset Name",
+        description="Name shown in studio settings. The Create dialog uses the default preset.",
+    )
+    aov_list: list[str] = SettingsField(
+        default_factory=list,
+        enum_resolver=aov_list_enum,
+        title="AOVs to create",
+        description="Blender AOVs enabled when this preset is used.",
+    )
+    custom_passes: list[CustomPassesModel] = SettingsField(
+        default_factory=list,
+        title="Custom Passes",
+        description="Additional AOVs besides the standard Blender ones.",
+    )
+
+
 class RenderSettingsModel(BaseSettingsModel):
     default_render_image_folder: str = SettingsField(
         title="Default Render Image Folder",
@@ -138,16 +158,21 @@ class RenderSettingsModel(BaseSettingsModel):
             "due to removal of the 'Composite' node in Blender 5."
         ),
     )
-    aov_list: list[str] = SettingsField(
-        default_factory=list,
-        enum_resolver=aov_list_enum,
-        title="AOVs to create",
-        description="Choose from available Blender AOVs for automatic creation when rendering.",
+    default_aov_preset: str = SettingsField(
+        "Default",
+        title="Default AOV Preset",
+        description=(
+            "Name of the AOV preset used as the starting checklist when "
+            "creating a Render product in Blender."
+        ),
     )
-    custom_passes: list[CustomPassesModel] = SettingsField(
+    aov_presets: list[AovPresetModel] = SettingsField(
         default_factory=list,
-        title="Custom Passes",
-        description="Configure additional AOVs for output besides the standard Blender ones.",
+        title="AOV Presets",
+        description=(
+            "Named AOV layouts. The default preset fills the Create Render "
+            "dialog; artists can then tick or untick passes per instance."
+        ),
     )
 
 
@@ -158,6 +183,12 @@ DEFAULT_RENDER_SETTINGS = {
     "multilayer_exr": True,
     "renderer": "CYCLES",
     "compositing": True,
-    "aov_list": ["combined"],
-    "custom_passes": []
+    "default_aov_preset": "Default",
+    "aov_presets": [
+        {
+            "name": "Default",
+            "aov_list": ["combined"],
+            "custom_passes": []
+        }
+    ]
 }

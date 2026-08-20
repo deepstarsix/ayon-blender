@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Iterable
 import bpy
 
 from ayon_core.settings import get_project_settings
@@ -51,6 +51,107 @@ def get_compositing(project_settings) -> bool:
         return False
 
     return project_settings["blender"]["RenderSettings"]["compositing"]
+
+
+# Labels match server/settings/render_settings.py aov_list_enum.
+AOV_LIST_ITEMS: list[tuple[str, str]] = [
+    ("combined", "Combined"),
+    ("z", "Z"),
+    ("mist", "Mist"),
+    ("normal", "Normal"),
+    ("position", "Position (Cycles Only)"),
+    ("vector", "Vector (Cycles Only)"),
+    ("uv", "UV (Cycles Only)"),
+    ("denoising", "Denoising Data (Cycles Only)"),
+    ("object_index", "Object Index (Cycles Only)"),
+    ("material_index", "Material Index (Cycles Only)"),
+    ("sample_count", "Sample Count (Cycles Only)"),
+    ("diffuse_light", "Diffuse Light/Direct"),
+    ("diffuse_indirect", "Diffuse Indirect (Cycles Only)"),
+    ("diffuse_color", "Diffuse Color"),
+    ("specular_light", "Specular (Glossy) Light/Direct"),
+    ("specular_indirect", "Specular (Glossy) Indirect (Cycles Only)"),
+    ("specular_color", "Specular (Glossy) Color"),
+    ("transmission_light", "Transmission Light/Direct (Cycles Only)"),
+    ("transmission_indirect", "Transmission Indirect (Cycles Only)"),
+    ("transmission_color", "Transmission Color (Cycles Only)"),
+    ("volume_light", "Volume Light/Direct"),
+    ("volume_indirect", "Volume Indirect (Cycles Only)"),
+    ("emission", "Emission"),
+    ("environment", "Environment"),
+    ("shadow", "Shadow/Shadow Catcher"),
+    ("ao", "Ambient Occlusion"),
+    ("bloom", "Bloom (Eevee Only)"),
+    ("transparent", "Transparent (Eevee Only)"),
+    ("cryptomatte_object", "Cryptomatte Object"),
+    ("cryptomatte_material", "Cryptomatte Material"),
+    ("cryptomatte_asset", "Cryptomatte Asset"),
+    ("cryptomatte_accurate", "Cryptomatte Accurate Mode (Eevee Only)"),
+]
+
+_CYCLES_ONLY_AOVS = {
+    "position",
+    "vector",
+    "uv",
+    "denoising",
+    "object_index",
+    "material_index",
+    "sample_count",
+    "diffuse_indirect",
+    "specular_indirect",
+    "transmission_light",
+    "transmission_indirect",
+    "transmission_color",
+    "volume_indirect",
+}
+_EEVEE_ONLY_AOVS = {
+    "bloom",
+    "transparent",
+    "cryptomatte_accurate",
+}
+
+
+def get_aov_presets(project_settings: dict) -> list[dict]:
+    """Return named AOV presets from project settings.
+
+    Older settings stored a single ``aov_list`` / ``custom_passes`` pair.
+    Those are treated as a ``Default`` preset until the studio saves the
+    new schema.
+    """
+    render_settings = project_settings["blender"]["RenderSettings"]
+    presets = render_settings.get("aov_presets") or []
+    if presets:
+        return presets
+    return [{
+        "name": "Default",
+        "aov_list": render_settings.get("aov_list") or ["combined"],
+        "custom_passes": render_settings.get("custom_passes") or [],
+    }]
+
+
+def get_default_aov_preset(project_settings: dict) -> dict:
+    """Return the AOV preset used as the Create-dialog default."""
+    render_settings = project_settings["blender"]["RenderSettings"]
+    presets = get_aov_presets(project_settings)
+    default_name = render_settings.get("default_aov_preset") or "Default"
+    for preset in presets:
+        if preset.get("name") == default_name:
+            return preset
+    return presets[0]
+
+
+def get_aov_enum_items(renderer: Optional[str] = None) -> dict[str, str]:
+    """Return AOV value-to-label items, optionally filtered by renderer."""
+    skip: set[str] = set()
+    if renderer == "CYCLES":
+        skip = _EEVEE_ONLY_AOVS
+    elif renderer in {"BLENDER_EEVEE", "BLENDER_EEVEE_NEXT"}:
+        skip = _CYCLES_ONLY_AOVS
+    return {
+        value: label
+        for value, label in AOV_LIST_ITEMS
+        if value not in skip
+    }
 
 
 def set_render_format(ext: str, multilayer: bool):
@@ -123,29 +224,45 @@ def get_file_format_extension(file_format: str) -> str:
         raise ValueError(f"Unsupported file format: {file_format}")
 
 
-def set_render_passes(settings, renderer, view_layers):
-    """Set render passes for the current view layer
+def set_render_passes(
+    settings,
+    renderer,
+    view_layers,
+    aov_list: Optional[Iterable[str]] = None,
+):
+    """Set render passes for the given view layers.
 
     Args:
         settings (dict): The project settings.
         renderer (str): The renderer to use, either CYCLES or BLENDER_EEVEE.
         view_layers (list[bpy.types.ViewLayer]): The list of view layers to
-        set the passes for.
+            set the passes for.
+        aov_list (Optional[Iterable[str]]): Explicit AOVs to enable. When
+            provided, only those passes are enabled on the selected view
+            layers. When omitted, the default AOV preset is used and already
+            enabled per-layer AOVs are kept.
     """
-    base_aov_list = set(settings["blender"]["RenderSettings"]["aov_list"])
-    custom_passes = settings["blender"]["RenderSettings"]["custom_passes"]
+    preset = get_default_aov_preset(settings)
+    custom_passes = preset.get("custom_passes") or []
+    if aov_list is None:
+        base_aov_list = set(preset.get("aov_list") or [])
+        authoritative = False
+    else:
+        base_aov_list = set(aov_list)
+        authoritative = True
+
     aov_list_combined: set[str] = set()
-    # Common passes for both renderers
     for vl in view_layers:
-        # Compute per-layer AOV list: project settings AOVs unioned with only
-        # this view layer's currently enabled AOVs. This preserves per-layer
-        # AOV differences instead of propagating all layers' AOVs everywhere.
-        existing_aov_list = set(existing_aov_options(renderer, vl))
-        aov_list = base_aov_list.union(existing_aov_list)
-        aov_list_combined.update(aov_list)
+        if authoritative:
+            enabled_aovs = set(base_aov_list)
+        else:
+            # Preserve per-layer AOV differences instead of propagating all
+            # layers' AOVs everywhere.
+            existing_aov_list = set(existing_aov_options(renderer, vl))
+            enabled_aovs = base_aov_list.union(existing_aov_list)
+        aov_list_combined.update(enabled_aovs)
 
         if _is_legacy_eevee_renderer(renderer):
-            # Eevee exclusive passes
             aov_options = get_aov_options(renderer)
             eevee_attrs: set[str] = {
                 "use_pass_bloom",
@@ -158,9 +275,8 @@ def set_render_passes(settings, renderer, view_layers):
                 if ver_major >= 3 and ver_minor > 6:
                     if attr == "use_pass_bloom":
                         continue
-                setattr(target, attr, pass_name in aov_list)
+                setattr(target, attr, pass_name in enabled_aovs)
         elif renderer == "CYCLES":
-            # Cycles exclusive passes
             aov_options = get_aov_options(renderer)
             cycle_attrs: set[str] = {
                 "denoising_store_passes", "pass_debug_sample_count",
@@ -169,7 +285,13 @@ def set_render_passes(settings, renderer, view_layers):
             }
             for pass_name, attr in aov_options.items():
                 target = vl.cycles if attr in cycle_attrs else vl
-                setattr(target, attr, pass_name in aov_list)
+                setattr(target, attr, pass_name in enabled_aovs)
+        else:
+            # Modern Eevee (BLENDER_EEVEE / BLENDER_EEVEE_NEXT)
+            aov_options = get_aov_options(renderer)
+            for pass_name, attr in aov_options.items():
+                if hasattr(vl, attr):
+                    setattr(vl, attr, pass_name in enabled_aovs)
 
         aovs_names: set[str] = {aov.name for aov in vl.aovs}
         for custom_pass in custom_passes:
@@ -246,6 +368,7 @@ def get_aov_options(renderer: str) -> dict[str, str]:
             "diffuse_indirect": "use_pass_diffuse_indirect",
             "specular_indirect": "use_pass_glossy_indirect",
             "transmission_direct": "use_pass_transmission_direct",
+            "transmission_light": "use_pass_transmission_direct",
             "transmission_indirect": "use_pass_transmission_indirect",
             "transmission_color": "use_pass_transmission_color",
             "volume_light": "use_pass_volume_direct",
@@ -531,7 +654,8 @@ def prepare_rendering(
     variant_name: str,
     project_settings: Optional[dict] = None,
     *,
-    selected_view_layers: Optional[list[str]] = None
+    selected_view_layers: Optional[list[str]] = None,
+    aov_list: Optional[Iterable[str]] = None,
 ) -> "bpy.types.CompositorNodeOutputFile":
     """Initialize render setup using render settings from project settings.
 
@@ -546,6 +670,8 @@ def prepare_rendering(
             currently treated the same as ``None`` because it is falsy, so it
             also results in all view layers being considered rather than no
             layers.
+        aov_list (Optional[Iterable[str]]): Explicit AOVs to enable on the
+            selected view layers. When omitted, the default AOV preset is used.
 
     Returns:
         bpy.types.CompositorNodeOutputFile: The compositor file output node created
@@ -574,7 +700,9 @@ def prepare_rendering(
     set_render_format(ext, multilayer)
     bpy.context.scene.render.engine = renderer
     view_layers = get_selected_view_layers(selected_view_layers=selected_view_layers)
-    set_render_passes(project_settings, renderer, view_layers)
+    set_render_passes(
+        project_settings, renderer, view_layers, aov_list=aov_list
+    )
 
     # Use selected renderlayer nodes, or assume we want a renderlayer node for
     # each view layer so we retrieve all of them.

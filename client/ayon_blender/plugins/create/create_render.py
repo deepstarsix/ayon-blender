@@ -70,7 +70,8 @@ class CreateRender(plugin.BlenderCreator):
             # add options to select renderlayers
             node = render_lib.prepare_rendering(
                 variant_name=variant,
-                selected_view_layers=view_layers
+                selected_view_layers=view_layers,
+                aov_list=pre_create_data.get("aov_list"),
             )
 
         else:
@@ -245,6 +246,14 @@ class CreateRender(plugin.BlenderCreator):
         view_layer_items: list[str] = [
             layer.name for layer in bpy.context.scene.view_layers
         ]
+        project_settings = self.create_context.get_current_project_settings()
+        renderer = render_lib.get_renderer(project_settings)
+        aov_preset = render_lib.get_default_aov_preset(project_settings)
+        aov_items = render_lib.get_aov_enum_items(renderer)
+        default_aovs = [
+            value for value in (aov_preset.get("aov_list") or [])
+            if value in aov_items
+        ]
         return [
             BoolDef(
                 "create_render_setup",
@@ -258,6 +267,19 @@ class CreateRender(plugin.BlenderCreator):
                     multiselection=True,
                     default=[],
                     tooltip="Select view layers to include in the render setup"
+            ),
+            EnumDef(
+                "aov_list",
+                items=aov_items,
+                label="AOVs",
+                multiselection=True,
+                default=default_aovs,
+                tooltip=(
+                    "Passes enabled when Create Render Setup is on. "
+                    "Unticked passes are disabled on the selected view "
+                    "layers. Ignored when Create Render Setup is off; "
+                    "the existing compositor and view-layer passes are used."
+                ),
             ),
         ]
 
