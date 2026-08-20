@@ -134,10 +134,32 @@ def get_default_aov_preset(project_settings: dict) -> dict:
     render_settings = project_settings["blender"]["RenderSettings"]
     presets = get_aov_presets(project_settings)
     default_name = render_settings.get("default_aov_preset") or "Default"
-    for preset in presets:
-        if preset.get("name") == default_name:
+    return get_aov_preset(project_settings, default_name) or presets[0]
+
+
+def get_aov_preset(
+    project_settings: dict, preset_name: Optional[str]
+) -> Optional[dict]:
+    """Return an AOV preset by name, or ``None`` if it does not exist."""
+    if not preset_name:
+        return None
+    for preset in get_aov_presets(project_settings):
+        if preset.get("name") == preset_name:
             return preset
-    return presets[0]
+    return None
+
+
+def get_aov_preset_enum_items(project_settings: dict) -> dict[str, str]:
+    """Return preset name-to-label items for the Create dialog."""
+    items: dict[str, str] = {}
+    for preset in get_aov_presets(project_settings):
+        name = (preset.get("name") or "").strip()
+        if not name or name in items:
+            continue
+        items[name] = name
+    if not items:
+        items["Default"] = "Default"
+    return items
 
 
 def get_aov_enum_items(renderer: Optional[str] = None) -> dict[str, str]:
@@ -229,6 +251,7 @@ def set_render_passes(
     renderer,
     view_layers,
     aov_list: Optional[Iterable[str]] = None,
+    custom_passes: Optional[Iterable[dict]] = None,
 ):
     """Set render passes for the given view layers.
 
@@ -241,9 +264,12 @@ def set_render_passes(
             provided, only those passes are enabled on the selected view
             layers. When omitted, the default AOV preset is used and already
             enabled per-layer AOVs are kept.
+        custom_passes (Optional[Iterable[dict]]): Custom AOV definitions to
+            add. When omitted, the default AOV preset's custom passes are used.
     """
     preset = get_default_aov_preset(settings)
-    custom_passes = preset.get("custom_passes") or []
+    if custom_passes is None:
+        custom_passes = preset.get("custom_passes") or []
     if aov_list is None:
         base_aov_list = set(preset.get("aov_list") or [])
         authoritative = False
@@ -656,6 +682,7 @@ def prepare_rendering(
     *,
     selected_view_layers: Optional[list[str]] = None,
     aov_list: Optional[Iterable[str]] = None,
+    custom_passes: Optional[Iterable[dict]] = None,
 ) -> "bpy.types.CompositorNodeOutputFile":
     """Initialize render setup using render settings from project settings.
 
@@ -672,6 +699,8 @@ def prepare_rendering(
             layers.
         aov_list (Optional[Iterable[str]]): Explicit AOVs to enable on the
             selected view layers. When omitted, the default AOV preset is used.
+        custom_passes (Optional[Iterable[dict]]): Custom AOV definitions to
+            add. When omitted, the default AOV preset's custom passes are used.
 
     Returns:
         bpy.types.CompositorNodeOutputFile: The compositor file output node created
@@ -701,7 +730,11 @@ def prepare_rendering(
     bpy.context.scene.render.engine = renderer
     view_layers = get_selected_view_layers(selected_view_layers=selected_view_layers)
     set_render_passes(
-        project_settings, renderer, view_layers, aov_list=aov_list
+        project_settings,
+        renderer,
+        view_layers,
+        aov_list=aov_list,
+        custom_passes=custom_passes,
     )
 
     # Use selected renderlayer nodes, or assume we want a renderlayer node for

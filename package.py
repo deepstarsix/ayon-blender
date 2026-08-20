@@ -1,6 +1,6 @@
 name = "blender"
 title = "Blender"
-version = "1.1.8+poster4"
+version = "1.1.8+poster8"
 app_host_name = "blender"
 client_dir = "ayon_blender"
 project_can_override_addon_version = True
